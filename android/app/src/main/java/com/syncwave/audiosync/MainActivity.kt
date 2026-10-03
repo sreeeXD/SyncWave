@@ -6,6 +6,7 @@ import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import androidx.activity.result.contract.ActivityResultContracts
+import android.view.WindowManager
 import com.getcapacitor.BridgeActivity
 import com.syncwave.audiosync.plugins.SyncWaveAudioPlugin
 import com.syncwave.audiosync.service.AudioCaptureService
@@ -26,6 +27,7 @@ class MainActivity : BridgeActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         registerPlugin(SyncWaveAudioPlugin::class.java)
     }
 

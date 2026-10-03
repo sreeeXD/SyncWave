@@ -3,7 +3,7 @@
   "appName": "SyncWave",
   "webDir": "dist",
   "server": {
-    "androidScheme": "https"
+    "androidScheme": "http"
   },
   "android": {
     "allowMixedContent": true,

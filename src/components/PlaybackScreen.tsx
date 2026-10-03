@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Play,
   Pause,
@@ -13,10 +13,16 @@ import {
   ChevronDown,
   Repeat,
   Lock,
-  Crown
+  Crown,
+  Youtube,
+  AlertTriangle,
+  Touchpad,
+  Loader2,
 } from 'lucide-react';
 import { AudioTrack, Participant } from '../types';
 import { VisualizerCanvas } from './VisualizerCanvas';
+import { globalAudioEngine } from '../services/audioEngine';
+import { YouTubeProvider } from '../services/YouTubeProvider';
 
 interface PlaybackScreenProps {
   isPlaying: boolean;
@@ -55,6 +61,92 @@ export const PlaybackScreen: React.FC<PlaybackScreenProps> = ({
   const [isLooping, setIsLooping] = useState<boolean>(true);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // ─── YouTube position slider state ────────────────────────────────────────
+  // We maintain a local display position that updates from the provider's poll.
+  // While the user is dragging, we freeze it at the drag position.
+  const [displayPosition, setDisplayPosition] = useState<number>(positionSec);
+  const isDraggingRef = useRef<boolean>(false);
+  const dragValueRef = useRef<number>(positionSec);
+
+  // ─── YouTube player container ref ─────────────────────────────────────────
+  // This ref is attached to the div that becomes the YT.Player container.
+  // React guarantees this ref is populated before the useEffect fires.
+  const ytContainerRef = useRef<HTMLDivElement | null>(null);
+
+  // ─── Provider state ───────────────────────────────────────────────────────
+  const isYouTube = currentTrack.provider === 'youtube';
+
+  // Derive YouTube provider and its state on every render
+  const getYtProvider = (): YouTubeProvider | null => {
+    const p = globalAudioEngine.getActiveProvider();
+    return isYouTube && p instanceof YouTubeProvider ? p : null;
+  };
+
+  const [ytError, setYtError] = useState<string | null>(null);
+  const [ytAutoplayBlocked, setYtAutoplayBlocked] = useState<boolean>(false);
+  const [ytPlayerReady, setYtPlayerReady] = useState<boolean>(false);
+
+  // ─── Attach YouTube container element to provider ─────────────────────────
+  // This useEffect fires after the YouTube player container div mounts in DOM.
+  // It calls setContainerElement() to give the provider the real DOM element.
+  // On cleanup (when track switches away from YouTube), it passes null.
+  useEffect(() => {
+    if (!isYouTube) return;
+
+    const provider = getYtProvider();
+    if (!provider) return;
+
+    const el = ytContainerRef.current;
+    if (el) {
+      console.log('[PlaybackScreen] Mounting: calling setContainerElement(element)');
+      provider.setContainerElement(el);
+    }
+
+    return () => {
+      console.log('[PlaybackScreen] Unmounting: calling setContainerElement(null)');
+      // Only clear if the provider hasn't changed
+      const currentProvider = globalAudioEngine.getActiveProvider();
+      if (currentProvider instanceof YouTubeProvider) {
+        currentProvider.setContainerElement(null);
+      }
+    };
+    // Re-run when track changes (isYouTube changes)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isYouTube, currentTrack.id]);
+
+  // ─── Subscribe to AudioEngine for provider state updates ──────────────────
+  useEffect(() => {
+    const unsub = globalAudioEngine.subscribe(() => {
+      const yt = getYtProvider();
+      if (yt) {
+        setYtError(yt.getErrorMessage());
+        setYtAutoplayBlocked(yt.isAutoplayBlocked());
+        setYtPlayerReady(yt.isReady());
+      } else {
+        setYtError(null);
+        setYtAutoplayBlocked(false);
+        setYtPlayerReady(false);
+      }
+
+      // Update display position from provider unless user is dragging
+      if (!isDraggingRef.current) {
+        setDisplayPosition(globalAudioEngine.getPosition());
+      }
+    });
+
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isYouTube]);
+
+  // ─── Sync displayPosition with positionSec prop when not dragging ─────────
+  // For non-YouTube (Demo) tracks, positionSec comes from App.tsx AudioEngine sub.
+  useEffect(() => {
+    if (!isDraggingRef.current && !isYouTube) {
+      setDisplayPosition(positionSec);
+    }
+  }, [positionSec, isYouTube]);
+
+  // ─── Helpers ──────────────────────────────────────────────────────────────
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
@@ -66,53 +158,69 @@ export const PlaybackScreen: React.FC<PlaybackScreenProps> = ({
     setTimeout(() => setNotice(null), 3000);
   };
 
+  // ─── Transport handlers ───────────────────────────────────────────────────
   const handlePlayClick = () => {
-    if (roomCode && !isHost) {
-      showNonHostNotice();
-      return;
-    }
+    if (roomCode && !isHost) { showNonHostNotice(); return; }
     onTogglePlay();
   };
 
-  const handleSeekClick = (pos: number) => {
-    if (roomCode && !isHost) {
-      showNonHostNotice();
-      return;
-    }
-    onSeek(pos);
-  };
-
   const handlePrevClick = () => {
-    if (roomCode && !isHost) {
-      showNonHostNotice();
-      return;
-    }
+    if (roomCode && !isHost) { showNonHostNotice(); return; }
     onPrevTrack();
   };
 
   const handleNextClick = () => {
-    if (roomCode && !isHost) {
-      showNonHostNotice();
-      return;
-    }
+    if (roomCode && !isHost) { showNonHostNotice(); return; }
     onNextTrack();
   };
 
   const handleSkipBack10 = () => {
-    if (roomCode && !isHost) {
-      showNonHostNotice();
-      return;
-    }
-    onSeek(Math.max(0, positionSec - 10));
+    if (roomCode && !isHost) { showNonHostNotice(); return; }
+    const target = Math.max(0, displayPosition - 10);
+    setDisplayPosition(target);
+    onSeek(target);
   };
 
   const handleSkipForward10 = () => {
-    if (roomCode && !isHost) {
-      showNonHostNotice();
-      return;
-    }
-    onSeek(Math.min(currentTrack.duration, positionSec + 10));
+    if (roomCode && !isHost) { showNonHostNotice(); return; }
+    const max = currentTrack.duration || 100;
+    const target = Math.min(max, displayPosition + 10);
+    setDisplayPosition(target);
+    onSeek(target);
   };
+
+  // ─── Slider drag handlers ─────────────────────────────────────────────────
+  // While dragging: show user's selected position without fighting polling.
+  // On release: send SEEK to the sync engine, then resume polling.
+  const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (roomCode && !isHost) return; // Non-host cannot seek
+    const val = parseFloat(e.target.value);
+    dragValueRef.current = val;
+    setDisplayPosition(val);
+  };
+
+  const handleSliderPointerDown = () => {
+    if (roomCode && !isHost) return;
+    isDraggingRef.current = true;
+  };
+
+  const handleSliderPointerUp = useCallback(() => {
+    if (!isDraggingRef.current) return;
+    isDraggingRef.current = false;
+    const target = dragValueRef.current;
+    console.log(`[PlaybackScreen] Slider pointer up at ${target.toFixed(2)}s — sending SEEK`);
+    onSeek(target);
+  }, [onSeek]);
+
+  const handleTapToSyncAutoplay = () => {
+    const yt = getYtProvider();
+    if (yt) yt.userInteractAndPlay();
+  };
+
+  // Whether SyncWave transport controls should be functionally disabled
+  // (YouTube player not yet ready — buttons still visible, but clicking play
+  // when player isn't ready would do nothing, so we dim them slightly)
+  const isYtControlsDisabled = isYouTube && !ytPlayerReady;
 
   return (
     <div className="flex-1 flex flex-col justify-between p-4 sm:p-5 text-slate-100 overflow-y-auto relative select-none">
@@ -150,97 +258,181 @@ export const PlaybackScreen: React.FC<PlaybackScreenProps> = ({
 
           <button
             onClick={onOpenSourceSelector}
-            className="px-2.5 py-1 rounded-full bg-indigo-950/60 border border-indigo-800/60 text-[11px] font-medium text-indigo-200 hover:bg-indigo-900/40 transition-colors flex items-center gap-1"
-            title="Preset Track Selector"
+            className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors flex items-center gap-1 border ${
+              isYouTube
+                ? 'bg-red-950/70 border-red-800/80 text-red-200 hover:bg-red-900/50'
+                : 'bg-indigo-950/60 border-indigo-800/60 text-indigo-200 hover:bg-indigo-900/40'
+            }`}
+            title="Music Provider Selector"
           >
-            <Radio className="w-3 h-3 text-indigo-400" />
+            {isYouTube ? <Youtube className="w-3 h-3 text-red-400" /> : <Radio className="w-3 h-3 text-indigo-400" />}
             <span className="truncate max-w-[110px]">{currentTrack.sourceApp}</span>
-            <ChevronDown className="w-3 h-3 text-indigo-400" />
+            <ChevronDown className="w-3 h-3 text-slate-400" />
           </button>
         </div>
       </div>
 
       {/* Main Player Centerpiece */}
-      <div className="flex-1 flex flex-col items-center justify-center my-3 max-w-md mx-auto w-full">
-        {/* Album Art with peaking Vinyl Disc animation */}
-        <div className="relative group my-2">
-          <div
-            className={`absolute top-0 right-0 w-44 sm:w-52 h-44 sm:h-52 rounded-full bg-slate-950 border-4 border-slate-800 shadow-2xl flex items-center justify-center transition-all duration-700 ${
-              isPlaying
-                ? 'translate-x-10 sm:translate-x-14 rotate-180 animate-spin [animation-duration:4s]'
-                : 'translate-x-2'
-            }`}
-          >
-            <div className="w-16 h-16 rounded-full border border-slate-700 bg-slate-900 flex items-center justify-center">
-              <Disc3 className="w-8 h-8 text-indigo-400" />
-            </div>
-          </div>
-
-          <div
-            onClick={onOpenSourceSelector}
-            className={`relative z-10 w-44 sm:w-52 h-44 sm:h-52 rounded-3xl bg-gradient-to-br ${currentTrack.colorGradient} p-4 shadow-2xl border border-white/15 cursor-pointer flex flex-col justify-between overflow-hidden transform transition-transform group-hover:scale-[1.02]`}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-white/70 font-semibold">
-                SyncWave · Live Feed
-              </span>
-              <span className="text-[10px] bg-black/40 backdrop-blur-md text-white font-mono px-2 py-0.5 rounded-full">
-                {currentTrack.bpm} BPM
-              </span>
-            </div>
-
-            <div className="my-auto flex items-center justify-center">
-              <Radio
-                className={`w-16 h-16 text-white/90 drop-shadow-lg transition-transform ${
-                  isPlaying ? 'scale-110 animate-pulse' : 'scale-95 opacity-70'
-                }`}
-              />
-            </div>
-
-            <div className="text-left bg-black/30 backdrop-blur-md p-2 rounded-2xl border border-white/10">
-              <div className="text-[10px] text-white/80 font-mono uppercase tracking-wider truncate">
-                {currentTrack.sourceApp}
+      <div className="flex-1 flex flex-col items-center justify-center my-2 max-w-md mx-auto w-full">
+        {isYouTube ? (
+          /* ── OFFICIAL YOUTUBE EMBEDDED PLAYER ── */
+          <div className="w-full my-2 space-y-2">
+            {/* Autoplay User-Action Prompt Banner — ABOVE player, never overlapping */}
+            {ytAutoplayBlocked && (
+              <div
+                onClick={handleTapToSyncAutoplay}
+                className="w-full p-3 bg-red-950/80 border border-red-500/50 rounded-2xl cursor-pointer hover:bg-red-900/80 transition-all flex items-center justify-between shadow-lg text-left"
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-red-600/30 text-red-400 shrink-0">
+                    <Touchpad className="w-5 h-5 animate-pulse" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white">Tap to Sync & Play YouTube Video</h4>
+                    <p className="text-[10px] text-slate-300">
+                      User tap required by Android/Browser to start video playback.
+                    </p>
+                  </div>
+                </div>
+                <button className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded-xl shadow-md shrink-0">
+                  Tap to Start
+                </button>
               </div>
-              <div className="text-xs font-bold text-white truncate">{currentTrack.album}</div>
+            )}
+
+            {/* YouTube Error Banner — ABOVE player, never overlapping */}
+            {ytError && (
+              <div className="w-full p-3 bg-rose-950/90 border border-rose-800 rounded-2xl flex items-center gap-2.5 text-left">
+                <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0" />
+                <div>
+                  <h4 className="text-xs font-bold text-white">YouTube Playback Error</h4>
+                  <p className="text-[10px] text-rose-300">{ytError}</p>
+                </div>
+              </div>
+            )}
+
+            {/* YouTube Player Loading indicator (before player ready) */}
+            {!ytPlayerReady && !ytError && !ytAutoplayBlocked && (
+              <div className="w-full p-2 flex items-center justify-center gap-2 text-slate-400 text-xs">
+                <Loader2 className="w-4 h-4 animate-spin text-red-400" />
+                <span>Loading YouTube player…</span>
+              </div>
+            )}
+
+            {/*
+              AUTHORITATIVE YOUTUBE PLAYER CONTAINER
+              The ref is attached here. React guarantees this DOM element exists
+              before the useEffect fires (which calls setContainerElement).
+              YT.Player is instantiated directly on this element — no ID string lookup.
+            */}
+            <div className="relative w-full aspect-video rounded-2xl overflow-hidden shadow-2xl border border-slate-800 bg-black">
+              <div ref={ytContainerRef} className="w-full h-full" />
+            </div>
+
+            {/* YouTube Track Title & Channel */}
+            <div className="text-center px-2">
+              <h2 className="text-sm sm:text-base font-bold text-white tracking-tight truncate">
+                {currentTrack.title}
+              </h2>
+              <p className="text-xs text-slate-400 truncate mt-0.5">
+                {currentTrack.artist || 'YouTube Channel'}
+              </p>
             </div>
           </div>
-        </div>
+        ) : (
+          /* ── DEMO SYNTH VISUALIZER & VINYL DISC ── */
+          <>
+            <div className="relative group my-2">
+              <div
+                className={`absolute top-0 right-0 w-44 sm:w-52 h-44 sm:h-52 rounded-full bg-slate-950 border-4 border-slate-800 shadow-2xl flex items-center justify-center transition-all duration-700 ${
+                  isPlaying
+                    ? 'translate-x-10 sm:translate-x-14 rotate-180 animate-spin [animation-duration:4s]'
+                    : 'translate-x-2'
+                }`}
+              >
+                <div className="w-16 h-16 rounded-full border border-slate-700 bg-slate-900 flex items-center justify-center">
+                  <Disc3 className="w-8 h-8 text-indigo-400" />
+                </div>
+              </div>
 
-        {/* Track Title & Artist Info */}
-        <div className="text-center mt-3 mb-2 w-full px-2">
-          <h2 className="text-base sm:text-lg font-bold text-white tracking-tight truncate">
-            {currentTrack.title}
-          </h2>
-          <p className="text-xs text-slate-400 truncate mt-0.5">{currentTrack.artist}</p>
-        </div>
+              <div
+                onClick={onOpenSourceSelector}
+                className={`relative z-10 w-44 sm:w-52 h-44 sm:h-52 rounded-3xl bg-gradient-to-br ${currentTrack.colorGradient} p-4 shadow-2xl border border-white/15 cursor-pointer flex flex-col justify-between overflow-hidden transform transition-transform group-hover:scale-[1.02]`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-mono uppercase tracking-widest text-white/70 font-semibold">
+                    SyncWave · Live Feed
+                  </span>
+                  <span className="text-[10px] bg-black/40 backdrop-blur-md text-white font-mono px-2 py-0.5 rounded-full">
+                    {currentTrack.bpm} BPM
+                  </span>
+                </div>
 
-        {/* Real-time Spectrum Visualizer */}
-        <div className="w-full my-1">
-          <VisualizerCanvas isPlaying={isPlaying} theme={currentTrack.coverArtTheme} />
-        </div>
+                <div className="my-auto flex items-center justify-center">
+                  <Radio
+                    className={`w-16 h-16 text-white/90 drop-shadow-lg transition-transform ${
+                      isPlaying ? 'scale-110 animate-pulse' : 'scale-95 opacity-70'
+                    }`}
+                  />
+                </div>
 
-        {/* Scrubber Timeline */}
+                <div className="text-left bg-black/30 backdrop-blur-md p-2 rounded-2xl border border-white/10">
+                  <div className="text-[10px] text-white/80 font-mono uppercase tracking-wider truncate">
+                    {currentTrack.sourceApp}
+                  </div>
+                  <div className="text-xs font-bold text-white truncate">{currentTrack.album}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Track Title & Artist Info */}
+            <div className="text-center mt-3 mb-2 w-full px-2">
+              <h2 className="text-base sm:text-lg font-bold text-white tracking-tight truncate">
+                {currentTrack.title}
+              </h2>
+              <p className="text-xs text-slate-400 truncate mt-0.5">{currentTrack.artist}</p>
+            </div>
+
+            {/* Real-time Spectrum Visualizer */}
+            <div className="w-full my-1">
+              <VisualizerCanvas isPlaying={isPlaying} theme={currentTrack.coverArtTheme} />
+            </div>
+          </>
+        )}
+
+        {/* ── Scrubber Timeline ── */}
         <div className="w-full px-1 mt-2">
           <input
             type="range"
             min="0"
             max={currentTrack.duration || 100}
-            value={positionSec}
-            onChange={(e) => handleSeekClick(parseFloat(e.target.value))}
-            className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+            step="0.25"
+            value={displayPosition}
+            onPointerDown={handleSliderPointerDown}
+            onChange={handleSliderChange}
+            onPointerUp={handleSliderPointerUp}
+            disabled={roomCode ? !isHost : false}
+            className={`w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500 ${
+              isYtControlsDisabled ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
           />
           <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 mt-1">
-            <span>{formatTime(positionSec)}</span>
-            <span>{formatTime(currentTrack.duration)}</span>
+            <span>{formatTime(displayPosition)}</span>
+            <span>{formatTime(currentTrack.duration || 0)}</span>
           </div>
         </div>
 
-        {/* Playback Transport Controls */}
+        {/* ── Playback Transport Controls ── */}
         <div className="flex items-center justify-center gap-3 sm:gap-4 my-2">
           {/* Skip -10s */}
           <button
             onClick={handleSkipBack10}
-            className="p-2.5 rounded-full text-slate-400 hover:text-white hover:bg-slate-800/60 active:scale-95 transition-all"
+            disabled={isYtControlsDisabled}
+            className={`p-2.5 rounded-full transition-all active:scale-95 ${
+              isYtControlsDisabled
+                ? 'text-slate-600 cursor-not-allowed'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+            }`}
             title="Rewind 10 seconds"
           >
             <RotateCcw className="w-4 h-4" />
@@ -258,20 +450,29 @@ export const PlaybackScreen: React.FC<PlaybackScreenProps> = ({
           {/* Primary Play / Pause Button */}
           <button
             onClick={handlePlayClick}
+            disabled={isYtControlsDisabled && !ytAutoplayBlocked}
             className={`w-14 h-14 rounded-full flex items-center justify-center shadow-lg transition-all active:scale-95 ${
               roomCode && !isHost
                 ? 'bg-slate-800 text-slate-400 border border-slate-700'
+                : isYouTube
+                ? isYtControlsDisabled
+                  ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                  : 'bg-red-600 hover:bg-red-500 text-white shadow-red-600/30'
                 : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/30'
             }`}
             title={
               roomCode && !isHost
                 ? 'Playback controlled by Host'
+                : isYtControlsDisabled
+                ? 'YouTube player loading…'
                 : isPlaying
                 ? 'Pause Sync'
                 : 'Broadcast Play'
             }
           >
-            {isPlaying ? (
+            {isYtControlsDisabled ? (
+              <Loader2 className="w-5 h-5 animate-spin" />
+            ) : isPlaying ? (
               <Pause className="w-6 h-6 fill-current" />
             ) : (
               <Play className="w-6 h-6 fill-current translate-x-0.5" />
@@ -290,14 +491,19 @@ export const PlaybackScreen: React.FC<PlaybackScreenProps> = ({
           {/* Skip +10s */}
           <button
             onClick={handleSkipForward10}
-            className="p-2.5 rounded-full text-slate-400 hover:text-white hover:bg-slate-800/60 active:scale-95 transition-all"
+            disabled={isYtControlsDisabled}
+            className={`p-2.5 rounded-full transition-all active:scale-95 ${
+              isYtControlsDisabled
+                ? 'text-slate-600 cursor-not-allowed'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+            }`}
             title="Forward 10 seconds"
           >
             <RotateCw className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Clean Volume Slider Bar (Independent per device) */}
+        {/* ── Volume Slider Bar ── */}
         <div className="w-full bg-slate-900/90 border border-slate-800/90 rounded-2xl p-3 my-1.5 flex items-center justify-between gap-3 shadow-sm">
           <button
             onClick={() => onVolumeChange(volume === 0 ? 80 : 0)}
@@ -328,9 +534,7 @@ export const PlaybackScreen: React.FC<PlaybackScreenProps> = ({
           <button
             onClick={() => setIsLooping(!isLooping)}
             className={`p-1.5 rounded-xl transition-colors ${
-              isLooping
-                ? 'text-indigo-400 bg-indigo-500/10'
-                : 'text-slate-500 hover:text-slate-300'
+              isLooping ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'
             }`}
             title={isLooping ? 'Repeat playlist enabled' : 'Repeat disabled'}
           >

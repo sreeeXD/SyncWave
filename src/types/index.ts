@@ -15,6 +15,7 @@ export interface AudioTrack {
   bpm: number;
   coverArtTheme: 'neon' | 'sunset' | 'forest' | 'amber' | 'cyan';
   artworkUrl?: string;
+  sourceId?: string; // For YouTube: the raw 11-char video ID
 }
 
 export interface Participant {

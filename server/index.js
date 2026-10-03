@@ -72,6 +72,12 @@ io.on('connection', (socket) => {
 
   // Handle Room Creation
   socket.on('create_room', (data = {}, callback) => {
+    // Enforce max ONE room per socket. If currently in a room, leave it first.
+    if (currentRoomCode && rooms.has(currentRoomCode)) {
+      console.log(`[Room Lifecycle] Socket ${socket.id} is leaving existing room ${currentRoomCode} before creating a new one.`);
+      handleUserExit(socket, currentRoomCode);
+    }
+
     let code = generateRoomCode();
     while (rooms.has(code)) {
       code = generateRoomCode();
@@ -147,6 +153,23 @@ io.on('connection', (socket) => {
       const errRes = { success: false, error: `Room "${formattedCode}" does not exist.` };
       if (typeof callback === 'function') callback(errRes);
       else socket.emit('room_error', errRes);
+      return;
+    }
+
+    // Enforce max ONE room per socket. If currently in a different room, leave it first.
+    if (currentRoomCode && currentRoomCode !== formattedCode && rooms.has(currentRoomCode)) {
+      console.log(`[Room Lifecycle] Socket ${socket.id} is leaving existing room ${currentRoomCode} before joining ${formattedCode}.`);
+      handleUserExit(socket, currentRoomCode);
+    } else if (currentRoomCode === formattedCode && rooms.has(formattedCode)) {
+      // Already in this room, just return current state
+      console.log(`[Room Lifecycle] Socket ${socket.id} is already in room ${formattedCode}. Returning existing state.`);
+      const room = rooms.get(formattedCode);
+      const roomState = getRoomPublicState(room);
+      if (typeof callback === 'function') {
+        callback({ success: true, roomCode: formattedCode, participantId: socket.id, roomState });
+      } else {
+        socket.emit('room_joined', { success: true, roomCode: formattedCode, participantId: socket.id, roomState });
+      }
       return;
     }
 

@@ -47,6 +47,8 @@ export default function App() {
   useEffect(() => {
     let isMounted = true;
 
+    let unsubscribeConn: (() => void) | null = null;
+
     const init = async () => {
       const nativeStatus = await getNativeDeviceStatus();
       if (!isMounted) return;
@@ -70,25 +72,17 @@ export default function App() {
       setDeviceModel(devModel);
       setOsVersion(devOs);
 
-      // Connect Socket
+      // Connect Socket & Subscribe to connection status changes
       const socket = socketService.connect();
       if (socket.id) {
         setCurrentUserId(socket.id);
       }
 
-      socket.on('connect', () => {
+      unsubscribeConn = socketService.subscribeConnectionStatus((connected) => {
         if (!isMounted) return;
-        if (socket.id) {
-          setCurrentUserId(socket.id);
-        }
-        // Reconnect Handling: If client was in a room, rejoin room to receive authoritative state
-        if (roomCode) {
-          console.log(`[App] Socket reconnected. Rejoining room ${roomCode}...`);
-          socketService.joinRoom(roomCode, { deviceModel: devModel, osVersion: devOs }).then((res) => {
-            if (res.success && res.roomState && isMounted) {
-              updateRoomState(res.roomState);
-            }
-          });
+        const currentSocket = socketService.getSocket();
+        if (connected && currentSocket?.id) {
+          setCurrentUserId(currentSocket.id);
         }
       });
 
@@ -154,6 +148,7 @@ export default function App() {
 
     return () => {
       isMounted = false;
+      if (unsubscribeConn) unsubscribeConn();
       unsubscribeRoom();
       unsubscribeHost();
       unsubscribePlayback();
@@ -236,6 +231,8 @@ export default function App() {
       if (isPlaying) {
         socketService.sendPlaybackCommand('PAUSE', { positionSec });
       } else {
+        // MUST pre-emptively play locally to satisfy browser user-gesture requirements
+        globalAudioEngine.play();
         socketService.sendPlaybackCommand('PLAY', { positionSec });
       }
     } else {

@@ -109,6 +109,7 @@ class SocketService {
     console.log(`[SocketService] Connecting to backend server: ${serverUrl}`);
 
     if (this.socket) {
+      this.socket.removeAllListeners();
       this.socket.disconnect();
     }
 

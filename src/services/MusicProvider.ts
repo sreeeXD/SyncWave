@@ -1,4 +1,5 @@
 import { AudioTrack, MusicProviderType } from '../types';
+import { YouTubeProvider } from './YouTubeProvider';
 
 export interface MusicProviderCapabilities {
   play: boolean;
@@ -186,12 +187,15 @@ export class DemoMusicProvider implements IMusicProvider {
   }
 
   public pause(): void {
-    if (!this.isPlaying) return;
     this.isPlaying = false;
     if (this.sequenceTimer) {
       window.clearInterval(this.sequenceTimer);
       this.sequenceTimer = null;
     }
+    if (this.ctx && this.ctx.state === 'running') {
+      this.ctx.suspend().catch(() => {});
+    }
+    console.log('[DemoMusicProvider] Paused synth loop & suspended AudioContext.');
     this.notify();
   }
 
@@ -224,12 +228,16 @@ export class DemoMusicProvider implements IMusicProvider {
   }
 
   public destroy(): void {
+    console.log('[DemoMusicProvider] Destroying provider resources...');
     this.pause();
     if (this.ctx) {
       try {
         this.ctx.close();
       } catch (e) {}
       this.ctx = null;
+      this.analyser = null;
+      this.masterGain = null;
+      this.musicGain = null;
     }
   }
 
@@ -415,5 +423,6 @@ export class MusicProviderRegistry {
   }
 }
 
-// Automatically register default DemoMusicProvider
+// Automatically register default DemoMusicProvider and YouTubeProvider
 MusicProviderRegistry.register(new DemoMusicProvider());
+MusicProviderRegistry.register(new YouTubeProvider());

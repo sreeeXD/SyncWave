@@ -59,6 +59,10 @@ class AudioEngineService {
     return this.activeProvider.providerType;
   }
 
+  public getActiveProvider(): IMusicProvider {
+    return this.activeProvider;
+  }
+
   /**
    * Switch the active music provider via MusicProviderRegistry.
    * Throws an explicit error if the provider is not implemented.
@@ -69,8 +73,18 @@ class AudioEngineService {
       return this.activeProvider;
     }
 
+    console.log(`[ProviderSwitch] Switching active provider from "${this.activeProvider.providerType}" to "${type}"`);
+    const oldProvider = this.activeProvider;
+    try {
+      oldProvider.pause();
+      if (oldProvider.destroy) {
+        oldProvider.destroy();
+      }
+    } catch (e) {
+      console.warn(`[ProviderSwitch] Error during old provider teardown:`, e);
+    }
+
     const newProvider = MusicProviderRegistry.get(type);
-    this.activeProvider.pause();
     this.activeProvider = newProvider;
     this.attachProviderListener();
     this.notify();
