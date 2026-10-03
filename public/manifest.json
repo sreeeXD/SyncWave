@@ -1,0 +1,18 @@
+{
+  "short_name": "SyncWave",
+  "name": "SyncWave - Universal Android Audio Sync",
+  "description": "Synchronize and listen to music together across multiple Android devices in real-time from any music app or platform.",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "192x192 512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#020617",
+  "theme_color": "#4f46e5",
+  "display": "standalone",
+  "orientation": "portrait"
+}
