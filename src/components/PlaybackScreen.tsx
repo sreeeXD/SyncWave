@@ -6,14 +6,14 @@ import {
   SkipForward,
   RotateCcw,
   RotateCw,
-  Users,
   Radio,
-  Sliders,
   Volume2,
   VolumeX,
   Disc3,
   ChevronDown,
-  Repeat
+  Repeat,
+  Lock,
+  Crown
 } from 'lucide-react';
 import { AudioTrack, Participant } from '../types';
 import { VisualizerCanvas } from './VisualizerCanvas';
@@ -30,6 +30,7 @@ interface PlaybackScreenProps {
   onVolumeChange: (vol: number) => void;
   participants: Participant[];
   roomCode: string;
+  isHost?: boolean;
   onOpenSourceSelector: () => void;
   onOpenRoomManager: () => void;
   onPullShade: () => void;
@@ -47,11 +48,12 @@ export const PlaybackScreen: React.FC<PlaybackScreenProps> = ({
   onVolumeChange,
   participants,
   roomCode,
+  isHost = true,
   onOpenSourceSelector,
   onOpenRoomManager,
-  onPullShade,
 }) => {
   const [isLooping, setIsLooping] = useState<boolean>(true);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -59,38 +61,100 @@ export const PlaybackScreen: React.FC<PlaybackScreenProps> = ({
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const progressPercent = Math.min(100, (positionSec / (currentTrack.duration || 1)) * 100);
+  const showNonHostNotice = () => {
+    setNotice('Only the Room Host can control room playback.');
+    setTimeout(() => setNotice(null), 3000);
+  };
+
+  const handlePlayClick = () => {
+    if (roomCode && !isHost) {
+      showNonHostNotice();
+      return;
+    }
+    onTogglePlay();
+  };
+
+  const handleSeekClick = (pos: number) => {
+    if (roomCode && !isHost) {
+      showNonHostNotice();
+      return;
+    }
+    onSeek(pos);
+  };
+
+  const handlePrevClick = () => {
+    if (roomCode && !isHost) {
+      showNonHostNotice();
+      return;
+    }
+    onPrevTrack();
+  };
+
+  const handleNextClick = () => {
+    if (roomCode && !isHost) {
+      showNonHostNotice();
+      return;
+    }
+    onNextTrack();
+  };
 
   const handleSkipBack10 = () => {
+    if (roomCode && !isHost) {
+      showNonHostNotice();
+      return;
+    }
     onSeek(Math.max(0, positionSec - 10));
   };
 
   const handleSkipForward10 = () => {
+    if (roomCode && !isHost) {
+      showNonHostNotice();
+      return;
+    }
     onSeek(Math.min(currentTrack.duration, positionSec + 10));
   };
 
   return (
     <div className="flex-1 flex flex-col justify-between p-4 sm:p-5 text-slate-100 overflow-y-auto relative select-none">
+      {/* Non-Host Warning Notice Banner */}
+      {notice && (
+        <div className="absolute top-14 left-4 right-4 z-40 bg-amber-500 text-slate-950 px-3 py-2 rounded-xl text-xs font-bold shadow-lg flex items-center justify-center gap-1.5 animate-in fade-in slide-in-from-top-2 duration-150">
+          <Lock className="w-3.5 h-3.5 shrink-0" />
+          <span>{notice}</span>
+        </div>
+      )}
+
       {/* Top Bar inside Screen */}
       <div className="flex items-center justify-between pb-2 border-b border-slate-900">
         <button
           onClick={onOpenRoomManager}
           className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900/90 border border-slate-800 text-xs font-semibold text-indigo-300 hover:border-indigo-500/50 transition-colors shadow-sm"
         >
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span>Room: {roomCode}</span>
+          <span className={`w-2 h-2 rounded-full ${roomCode ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+          <span>{roomCode ? `Room: ${roomCode}` : 'No Room (Tap to Join)'}</span>
         </button>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
+          {roomCode && (
+            <span
+              className={`text-[10px] px-2 py-0.5 rounded-full font-medium flex items-center gap-1 border ${
+                isHost
+                  ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
+                  : 'bg-slate-800 text-slate-400 border-slate-700'
+              }`}
+            >
+              {isHost ? <Crown className="w-3 h-3 text-amber-400" /> : <Lock className="w-3 h-3 text-slate-400" />}
+              <span>{isHost ? 'Host' : 'Listener'}</span>
+            </span>
+          )}
+
           <button
             onClick={onOpenSourceSelector}
             className="px-2.5 py-1 rounded-full bg-indigo-950/60 border border-indigo-800/60 text-[11px] font-medium text-indigo-200 hover:bg-indigo-900/40 transition-colors flex items-center gap-1"
-            title="Change Audio Source"
+            title="Preset Track Selector"
           >
             <Radio className="w-3 h-3 text-indigo-400" />
-            <span className="truncate max-w-[120px]">
-              {currentTrack.sourceType === 'system_capture' ? 'Any App Capture' : currentTrack.sourceApp}
-            </span>
+            <span className="truncate max-w-[110px]">{currentTrack.sourceApp}</span>
             <ChevronDown className="w-3 h-3 text-indigo-400" />
           </button>
         </div>
@@ -100,7 +164,6 @@ export const PlaybackScreen: React.FC<PlaybackScreenProps> = ({
       <div className="flex-1 flex flex-col items-center justify-center my-3 max-w-md mx-auto w-full">
         {/* Album Art with peaking Vinyl Disc animation */}
         <div className="relative group my-2">
-          {/* Peaking Spinning Vinyl Disc */}
           <div
             className={`absolute top-0 right-0 w-44 sm:w-52 h-44 sm:h-52 rounded-full bg-slate-950 border-4 border-slate-800 shadow-2xl flex items-center justify-center transition-all duration-700 ${
               isPlaying
@@ -113,7 +176,6 @@ export const PlaybackScreen: React.FC<PlaybackScreenProps> = ({
             </div>
           </div>
 
-          {/* Main Album Artwork Sleeve */}
           <div
             onClick={onOpenSourceSelector}
             className={`relative z-10 w-44 sm:w-52 h-44 sm:h-52 rounded-3xl bg-gradient-to-br ${currentTrack.colorGradient} p-4 shadow-2xl border border-white/15 cursor-pointer flex flex-col justify-between overflow-hidden transform transition-transform group-hover:scale-[1.02]`}
@@ -164,7 +226,7 @@ export const PlaybackScreen: React.FC<PlaybackScreenProps> = ({
             min="0"
             max={currentTrack.duration || 100}
             value={positionSec}
-            onChange={(e) => onSeek(parseFloat(e.target.value))}
+            onChange={(e) => handleSeekClick(parseFloat(e.target.value))}
             className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
           />
           <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 mt-1">
@@ -186,7 +248,7 @@ export const PlaybackScreen: React.FC<PlaybackScreenProps> = ({
 
           {/* Previous Track */}
           <button
-            onClick={onPrevTrack}
+            onClick={handlePrevClick}
             className="p-2.5 rounded-full text-slate-400 hover:text-white hover:bg-slate-800/60 active:scale-95 transition-all"
             title="Previous Track"
           >
@@ -195,20 +257,30 @@ export const PlaybackScreen: React.FC<PlaybackScreenProps> = ({
 
           {/* Primary Play / Pause Button */}
           <button
-            onClick={onTogglePlay}
-            className="w-14 h-14 rounded-full bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white flex items-center justify-center shadow-lg shadow-indigo-600/30 transition-all"
-            title={isPlaying ? 'Pause Sync' : 'Broadcast Play'}
+            onClick={handlePlayClick}
+            className={`w-14 h-14 rounded-full flex items-center justify-center shadow-lg transition-all active:scale-95 ${
+              roomCode && !isHost
+                ? 'bg-slate-800 text-slate-400 border border-slate-700'
+                : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/30'
+            }`}
+            title={
+              roomCode && !isHost
+                ? 'Playback controlled by Host'
+                : isPlaying
+                ? 'Pause Sync'
+                : 'Broadcast Play'
+            }
           >
             {isPlaying ? (
-              <Pause className="w-6 h-6 fill-white" />
+              <Pause className="w-6 h-6 fill-current" />
             ) : (
-              <Play className="w-6 h-6 fill-white translate-x-0.5" />
+              <Play className="w-6 h-6 fill-current translate-x-0.5" />
             )}
           </button>
 
           {/* Next Track */}
           <button
-            onClick={onNextTrack}
+            onClick={handleNextClick}
             className="p-2.5 rounded-full text-slate-400 hover:text-white hover:bg-slate-800/60 active:scale-95 transition-all"
             title="Next Track"
           >
@@ -225,9 +297,8 @@ export const PlaybackScreen: React.FC<PlaybackScreenProps> = ({
           </button>
         </div>
 
-        {/* Clean, Dedicated Volume & Audio Listening Bar */}
+        {/* Clean Volume Slider Bar (Independent per device) */}
         <div className="w-full bg-slate-900/90 border border-slate-800/90 rounded-2xl p-3 my-1.5 flex items-center justify-between gap-3 shadow-sm">
-          {/* Mute / Unmute Button */}
           <button
             onClick={() => onVolumeChange(volume === 0 ? 80 : 0)}
             className="p-1 rounded-xl text-slate-400 hover:text-white transition-colors"
@@ -240,7 +311,6 @@ export const PlaybackScreen: React.FC<PlaybackScreenProps> = ({
             )}
           </button>
 
-          {/* Volume Slider */}
           <div className="flex-1 flex items-center gap-2">
             <input
               type="range"
@@ -255,7 +325,6 @@ export const PlaybackScreen: React.FC<PlaybackScreenProps> = ({
             </span>
           </div>
 
-          {/* Loop / Repeat Toggle */}
           <button
             onClick={() => setIsLooping(!isLooping)}
             className={`p-1.5 rounded-xl transition-colors ${
@@ -272,27 +341,30 @@ export const PlaybackScreen: React.FC<PlaybackScreenProps> = ({
 
       {/* Synchronized Peers Teaser */}
       <div className="w-full space-y-2 max-w-md mx-auto">
-        {/* Room participants preview banner */}
         <div
           onClick={onOpenRoomManager}
           className="p-2.5 rounded-2xl bg-slate-900/80 border border-slate-800/80 flex items-center justify-between cursor-pointer hover:border-slate-700 transition-colors text-xs"
         >
           <div className="flex items-center gap-2">
-            <div className="flex -space-x-1.5 overflow-hidden">
-              {participants.slice(0, 3).map((p) => (
-                <div
-                  key={p.id}
-                  className={`w-6 h-6 rounded-full ${p.avatarColor} ring-2 ring-slate-900 flex items-center justify-center text-[10px] font-bold text-white`}
-                >
-                  {p.name.charAt(0)}
-                </div>
-              ))}
-            </div>
+            {participants.length > 0 && (
+              <div className="flex -space-x-1.5 overflow-hidden">
+                {participants.slice(0, 3).map((p) => (
+                  <div
+                    key={p.id}
+                    className={`w-6 h-6 rounded-full ${p.avatarColor || 'bg-indigo-600'} ring-2 ring-slate-900 flex items-center justify-center text-[10px] font-bold text-white`}
+                  >
+                    {p.name.charAt(0)}
+                  </div>
+                ))}
+              </div>
+            )}
             <span className="font-medium text-slate-300">
-              {participants.length} Devices Synced
+              {roomCode ? `${participants.length} Devices Synced` : 'Not in a Room'}
             </span>
           </div>
-          <span className="text-[11px] font-semibold text-indigo-400">Manage Room &rarr;</span>
+          <span className="text-[11px] font-semibold text-indigo-400">
+            {roomCode ? 'Manage Room \u2192' : 'Create or Join Room \u2192'}
+          </span>
         </div>
       </div>
     </div>

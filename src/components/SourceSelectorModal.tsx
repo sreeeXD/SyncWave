@@ -24,8 +24,8 @@ export const SourceSelectorModal: React.FC<SourceSelectorModalProps> = ({
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-slate-800">
           <div>
-            <h3 className="text-base font-bold text-white">Select Music Service Source</h3>
-            <p className="text-xs text-slate-400">Synchronized control across all connected room devices</p>
+            <h3 className="text-base font-bold text-white">Select Audio Preset Track</h3>
+            <p className="text-xs text-slate-400">Demo synthesized track playback across devices</p>
           </div>
           <button
             onClick={onClose}
@@ -37,70 +37,14 @@ export const SourceSelectorModal: React.FC<SourceSelectorModalProps> = ({
 
         {/* Source Options List */}
         <div className="overflow-y-auto py-3 space-y-2.5 flex-1 pr-1">
-          {/* Option 1: Spotify Connect Remote Sync */}
+          {/* Option 1: Demo Synth Stream */}
           <div
             onClick={() => {
               onSelectTrack(PRESET_TRACKS[0]);
               onClose();
             }}
             className={`p-3.5 rounded-2xl border cursor-pointer transition-all ${
-              currentSourceType === 'spotify_sync'
-                ? 'bg-indigo-950/50 border-indigo-500 ring-1 ring-indigo-500/50'
-                : 'bg-slate-950/60 border-slate-800/80 hover:border-slate-700'
-            }`}
-          >
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400">
-                  <Music className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-sm font-bold text-white">Spotify Connect Remote Sync</div>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    Synchronizes Spotify playback timeline & remote transport controls across devices.
-                  </p>
-                </div>
-              </div>
-              {currentSourceType === 'spotify_sync' && <Check className="w-5 h-5 text-indigo-400 shrink-0" />}
-            </div>
-          </div>
-
-          {/* Option 2: YouTube Music Room Sync */}
-          <div
-            onClick={() => {
-              onSelectTrack(PRESET_TRACKS[2]);
-              onClose();
-            }}
-            className={`p-3.5 rounded-2xl border cursor-pointer transition-all ${
-              currentSourceType === 'youtube_sync'
-                ? 'bg-indigo-950/50 border-indigo-500 ring-1 ring-indigo-500/50'
-                : 'bg-slate-950/60 border-slate-800/80 hover:border-slate-700'
-            }`}
-          >
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2.5 rounded-xl bg-rose-500/20 text-rose-400">
-                  <Youtube className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-sm font-bold text-white">YouTube Music Room Sync</div>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    Shared queue & track timeline with millisecond seek alignment.
-                  </p>
-                </div>
-              </div>
-              {currentSourceType === 'youtube_sync' && <Check className="w-5 h-5 text-indigo-400 shrink-0" />}
-            </div>
-          </div>
-
-          {/* Option 3: Cyberwave / Live Synth Stream */}
-          <div
-            onClick={() => {
-              onSelectTrack(PRESET_TRACKS[3]);
-              onClose();
-            }}
-            className={`p-3.5 rounded-2xl border cursor-pointer transition-all ${
-              currentSourceType === 'radio_stream'
+              currentSourceType === 'radio_stream' || currentSourceType === 'spotify_sync'
                 ? 'bg-indigo-950/50 border-indigo-500 ring-1 ring-indigo-500/50'
                 : 'bg-slate-950/60 border-slate-800/80 hover:border-slate-700'
             }`}
@@ -111,13 +55,60 @@ export const SourceSelectorModal: React.FC<SourceSelectorModalProps> = ({
                   <Radio className="w-5 h-5" />
                 </div>
                 <div>
-                  <div className="text-sm font-bold text-white">Cyberwave / Live Synth Stream</div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-white">Demo Synchronized Synth Feed</span>
+                    <span className="text-[9px] bg-emerald-500/20 text-emerald-300 font-mono px-1.5 py-0.5 rounded">Active Demo</span>
+                  </div>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    Broadcasting live synthesized radio with real-time waveform feed.
+                    Real-time in-browser synth engine used for multi-device sync testing.
                   </p>
                 </div>
               </div>
-              {currentSourceType === 'radio_stream' && <Check className="w-5 h-5 text-indigo-400 shrink-0" />}
+              <Check className="w-5 h-5 text-indigo-400 shrink-0" />
+            </div>
+          </div>
+
+          {/* Option 2: Spotify Connect (Coming Soon) */}
+          <div
+            className="p-3.5 rounded-2xl border border-slate-800/50 bg-slate-950/30 opacity-60 cursor-not-allowed"
+          >
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-xl bg-slate-800 text-slate-400">
+                  <Music className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-slate-300">Spotify Connect Integration</span>
+                    <span className="text-[9px] bg-slate-800 text-slate-400 font-mono px-1.5 py-0.5 rounded">Coming Soon</span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    External API Spotify player synchronization (Not implemented in current phase).
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Option 3: YouTube Music (Coming Soon) */}
+          <div
+            className="p-3.5 rounded-2xl border border-slate-800/50 bg-slate-950/30 opacity-60 cursor-not-allowed"
+          >
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-xl bg-slate-800 text-slate-400">
+                  <Youtube className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-slate-300">YouTube Music Integration</span>
+                    <span className="text-[9px] bg-slate-800 text-slate-400 font-mono px-1.5 py-0.5 rounded">Coming Soon</span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    External API YouTube player synchronization (Not implemented in current phase).
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
         </div>

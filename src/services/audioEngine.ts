@@ -1,6 +1,6 @@
 /**
- * Audio Engine Service for SyncWave
- * Encapsulates music provider playback & phase-lock drift correction for multi-device sync.
+ * Audio Engine Service for SyncWave (P0.5 Synchronized Playback Layer)
+ * Encapsulates demo music provider playback & simple threshold-based drift correction.
  */
 
 import { AudioTrack } from '../types';
@@ -14,7 +14,7 @@ class AudioEngineService {
   private onStateChangeCallbacks: Set<() => void> = new Set();
   private driftCorrectionTimer: number | null = null;
 
-  // Track room target playback state for drift correction
+  // Authoritative room target playback state for synchronization
   private roomTargetState: {
     isPlaying: boolean;
     serverTimestamp: number;
@@ -77,12 +77,13 @@ class AudioEngineService {
     this.activeProvider.setVolume(vol0to100);
   }
 
-  public setPlaybackRate(rate: number): void {
-    this.activeProvider.setPlaybackRate(rate);
+  public resetRoomTarget(): void {
+    this.roomTargetState = null;
+    this.activeProvider.setPlaybackRate(1.0);
   }
 
   /**
-   * Apply synchronized remote playback state from WebSocket host server command
+   * Apply synchronized remote playback state from WebSocket host server command or room join
    */
   public applyRemotePlaybackState(
     track: AudioTrack,
@@ -110,59 +111,29 @@ class AudioEngineService {
   }
 
   /**
-   * Update internal reference of room playback target for continuous phase locking
-   */
-  public updateRoomTarget(isPlaying: boolean, positionSec: number, serverTimestamp: number): void {
-    this.roomTargetState = {
-      isPlaying,
-      serverTimestamp,
-      positionSec,
-    };
-  }
-
-  /**
-   * Phase-Lock Loop (PLL) Drift Correction (Phase 3)
-   * Continuously compares local playback position with calculated authoritative room timeline.
+   * Simple Threshold-Based Drift Correction (P0.5)
+   * Periodically checks if local position has drifted from authoritative server timestamp timeline.
    */
   private startDriftCorrectionLoop() {
     if (this.driftCorrectionTimer) window.clearInterval(this.driftCorrectionTimer);
 
     this.driftCorrectionTimer = window.setInterval(() => {
-      if (!this.roomTargetState || !this.activeProvider.getIsPlaying()) {
-        this.activeProvider.setPlaybackRate(1.0);
-        return;
-      }
-
-      if (!this.roomTargetState.isPlaying) {
+      if (!this.roomTargetState || !this.roomTargetState.isPlaying || !this.activeProvider.getIsPlaying()) {
         return;
       }
 
       const nowServer = globalClockSync.getAdjustedServerTime();
-      const elapsedSec = (nowServer - this.roomTargetState.serverTimestamp) / 1000;
+      const elapsedSec = Math.max(0, (nowServer - this.roomTargetState.serverTimestamp) / 1000);
       const expectedPosSec = this.roomTargetState.positionSec + elapsedSec;
       const localPosSec = this.activeProvider.getPosition();
       const driftSec = localPosSec - expectedPosSec;
-      const driftMs = driftSec * 1000;
 
-      // Phase 3 Strategy Rules:
-      // 1. Hard Seek if drift > 1.0 second
-      if (Math.abs(driftSec) > 1.0) {
-        console.warn(`[Drift Correction] Hard seek triggered! Drift: ${Math.round(driftMs)}ms`);
+      // P0.5 Simple Threshold Rule: If drift > 0.5s (500ms), perform simple seek correction
+      if (Math.abs(driftSec) > 0.5) {
+        console.warn(`[P0.5 Drift Correction] Seeking to authoritative position ${expectedPosSec.toFixed(2)}s (Drift: ${driftSec.toFixed(2)}s)`);
         this.activeProvider.seek(Math.max(0, expectedPosSec));
-        this.activeProvider.setPlaybackRate(1.0);
       }
-      // 2. Micro-tune playback rate if drift is between 15ms and 1000ms
-      else if (Math.abs(driftMs) > 15) {
-        // If local is ahead (driftMs > 0), slow down (rate < 1.0)
-        // If local is behind (driftMs < 0), speed up (rate > 1.0)
-        const rateComp = globalClockSync.calculatePlaybackRateCompensation(-driftMs);
-        this.activeProvider.setPlaybackRate(rateComp);
-      }
-      // 3. Perfect alignment (<15ms)
-      else {
-        this.activeProvider.setPlaybackRate(1.0);
-      }
-    }, 1000);
+    }, 2000);
   }
 }
 

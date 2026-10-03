@@ -13,6 +13,8 @@ import {
 } from './services/nativeAndroidBridge';
 import { ShieldAlert } from 'lucide-react';
 
+export type RoomConnectionStatus = 'no_room' | 'joining' | 'connected' | 'error';
+
 export default function App() {
   // Playback state
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -26,7 +28,8 @@ export default function App() {
   const [osVersion, setOsVersion] = useState<string>('Web Version');
   const [hasNotificationPermission, setHasNotificationPermission] = useState<boolean>(true);
 
-  // Real Socket Room State
+  // Real Socket Room Lifecycle State (Explicit Room State Model)
+  const [roomConnectionStatus, setRoomConnectionStatus] = useState<RoomConnectionStatus>('no_room');
   const [roomCode, setRoomCode] = useState<string>('');
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string>('');
@@ -37,9 +40,10 @@ export default function App() {
   const [isRoomManagerOpen, setIsRoomManagerOpen] = useState<boolean>(false);
 
   // Determine if this device is the current room host
-  const isHost = currentUserId ? (hostId ? currentUserId === hostId : true) : true;
+  const currentParticipant = participants.find((p) => p.id === currentUserId);
+  const isHost = currentParticipant?.isHost ?? false;
 
-  // 1. Initialize Socket Connection & Native Device Info
+  // 1. Initialize Socket Connection & Native Device Info (NO AUTO ROOM CREATION)
   useEffect(() => {
     let isMounted = true;
 
@@ -71,33 +75,45 @@ export default function App() {
       if (socket.id) {
         setCurrentUserId(socket.id);
       }
+
       socket.on('connect', () => {
-        if (socket.id && isMounted) {
+        if (!isMounted) return;
+        if (socket.id) {
           setCurrentUserId(socket.id);
+        }
+        // Reconnect Handling: If client was in a room, rejoin room to receive authoritative state
+        if (roomCode) {
+          console.log(`[App] Socket reconnected. Rejoining room ${roomCode}...`);
+          socketService.joinRoom(roomCode, { deviceModel: devModel, osVersion: devOs }).then((res) => {
+            if (res.success && res.roomState && isMounted) {
+              updateRoomState(res.roomState);
+            }
+          });
         }
       });
 
-      // Check URL parameters for ?room=SW-XXXX
+      // Check URL parameters for ?room=SW-XXXX (Only join if URL param exists)
       const urlParams = new URLSearchParams(window.location.search);
       const urlRoomCode = urlParams.get('room');
 
       if (urlRoomCode) {
         console.log(`[App] Joining room from URL query parameter: ${urlRoomCode}`);
+        setRoomConnectionStatus('joining');
         const res = await socketService.joinRoom(urlRoomCode, { deviceModel: devModel, osVersion: devOs });
-        if (res.success && res.roomState) {
+        if (res.success && res.roomState && isMounted) {
           updateRoomState(res.roomState);
-        } else {
-          console.warn(`[App] Failed to join URL room ${urlRoomCode}: ${res.error}. Creating new room.`);
-          const createRes = await socketService.createRoom({ deviceModel: devModel, osVersion: devOs });
-          if (createRes.success && createRes.roomState) {
-            updateRoomState(createRes.roomState);
-          }
+          setRoomConnectionStatus('connected');
+        } else if (isMounted) {
+          console.warn(`[App] Failed to join URL room ${urlRoomCode}: ${res.error}. Remaining in NO_ROOM state.`);
+          setRoomConnectionStatus('error');
+          setRoomCode('');
+          setParticipants([]);
         }
       } else {
-        const createRes = await socketService.createRoom({ deviceModel: devModel, osVersion: devOs });
-        if (createRes.success && createRes.roomState) {
-          updateRoomState(createRes.roomState);
-        }
+        // Initial state MUST be NO_ROOM. Do NOT auto-create a room on app startup!
+        setRoomConnectionStatus('no_room');
+        setRoomCode('');
+        setParticipants([]);
       }
     };
 
@@ -107,6 +123,7 @@ export default function App() {
     const unsubscribeRoom = socketService.onRoomUpdated((updatedState: RoomState) => {
       if (isMounted) {
         updateRoomState(updatedState);
+        setRoomConnectionStatus('connected');
       }
     });
 
@@ -120,7 +137,7 @@ export default function App() {
     // Listen to synchronized playback commands from backend
     const unsubscribePlayback = socketService.onPlaybackCommand((cmd: PlaybackCommandPayload) => {
       if (!isMounted) return;
-      console.log(`[App] Applying Playback Command: ${cmd.type} | Track: ${cmd.currentTrack.title}`);
+      console.log(`[App] Received Playback Command: ${cmd.type} | Track: ${cmd.currentTrack.title}`);
 
       // Calculate target position based on server timestamp & NTP clock offset
       const nowServer = globalClockSync.getAdjustedServerTime();
@@ -152,16 +169,18 @@ export default function App() {
       setCurrentTrack(state.currentTrack);
     }
 
-    // Synchronize initial join position
+    // Late Join Synchronization: Calculate target position based on serverTimestamp
     if (state.isPlaying) {
       const nowServer = globalClockSync.getAdjustedServerTime();
       const elapsedSec = Math.max(0, (nowServer - (state.lastSyncTimestamp || state.serverTimestamp || Date.now())) / 1000);
       const targetPosSec = state.positionSec + elapsedSec;
       globalAudioEngine.applyRemotePlaybackState(state.currentTrack, true, targetPosSec, state.serverTimestamp);
+    } else {
+      globalAudioEngine.applyRemotePlaybackState(state.currentTrack, false, state.positionSec, state.serverTimestamp);
     }
   };
 
-  // Sync state with local AudioEngine for UI rendering
+  // Sync local AudioEngine state with UI state
   useEffect(() => {
     const unsubscribe = globalAudioEngine.subscribe(() => {
       setIsPlaying(globalAudioEngine.getIsPlaying());
@@ -174,21 +193,28 @@ export default function App() {
     };
   }, []);
 
-  // Room Management Actions
+  // Room Management Actions (Explicit user-triggered only)
   const handleCreateRoom = useCallback(async () => {
+    setRoomConnectionStatus('joining');
     const res = await socketService.createRoom({ deviceModel, osVersion });
     if (res.success && res.roomState) {
       updateRoomState(res.roomState);
+      setRoomConnectionStatus('connected');
+    } else {
+      setRoomConnectionStatus('error');
     }
   }, [deviceModel, osVersion]);
 
   const handleJoinRoom = useCallback(
     async (codeToJoin: string): Promise<boolean> => {
+      setRoomConnectionStatus('joining');
       const res = await socketService.joinRoom(codeToJoin, { deviceModel, osVersion });
       if (res.success && res.roomState) {
         updateRoomState(res.roomState);
+        setRoomConnectionStatus('connected');
         return true;
       }
+      setRoomConnectionStatus('error');
       return false;
     },
     [deviceModel, osVersion]
@@ -196,38 +222,63 @@ export default function App() {
 
   const handleLeaveRoom = useCallback(async () => {
     socketService.leaveRoom();
-    const res = await socketService.createRoom({ deviceModel, osVersion });
-    if (res.success && res.roomState) {
-      updateRoomState(res.roomState);
-    }
-  }, [deviceModel, osVersion]);
+    globalAudioEngine.resetRoomTarget();
+    setRoomCode('');
+    setParticipants([]);
+    setHostId('');
+    setRoomConnectionStatus('no_room');
+  }, []);
 
-  // Playback Control Handlers (Host Broadcasts Command, Listeners rely on Host)
+  // Transport Control Handlers
   const handleTogglePlay = useCallback(() => {
-    if (isPlaying) {
-      socketService.sendPlaybackCommand('PAUSE', { positionSec });
+    if (roomConnectionStatus === 'connected') {
+      if (!isHost) return;
+      if (isPlaying) {
+        socketService.sendPlaybackCommand('PAUSE', { positionSec });
+      } else {
+        socketService.sendPlaybackCommand('PLAY', { positionSec });
+      }
     } else {
-      socketService.sendPlaybackCommand('PLAY', { positionSec });
+      if (isPlaying) {
+        globalAudioEngine.pause();
+      } else {
+        globalAudioEngine.play();
+      }
     }
-  }, [isPlaying, positionSec]);
+  }, [isPlaying, positionSec, roomConnectionStatus, isHost]);
 
   const handleNextTrack = useCallback(() => {
     const currentIndex = PRESET_TRACKS.findIndex((t) => t.id === currentTrack.id);
     const nextIndex = (currentIndex + 1) % PRESET_TRACKS.length;
     const nextTrack = PRESET_TRACKS[nextIndex];
-    socketService.sendPlaybackCommand('TRACK_CHANGE', { track: nextTrack });
-  }, [currentTrack]);
+    if (roomConnectionStatus === 'connected') {
+      if (!isHost) return;
+      socketService.sendPlaybackCommand('TRACK_CHANGE', { track: nextTrack });
+    } else {
+      globalAudioEngine.setTrack(nextTrack);
+    }
+  }, [currentTrack, roomConnectionStatus, isHost]);
 
   const handlePrevTrack = useCallback(() => {
     const currentIndex = PRESET_TRACKS.findIndex((t) => t.id === currentTrack.id);
     const prevIndex = (currentIndex - 1 + PRESET_TRACKS.length) % PRESET_TRACKS.length;
     const prevTrack = PRESET_TRACKS[prevIndex];
-    socketService.sendPlaybackCommand('TRACK_CHANGE', { track: prevTrack });
-  }, [currentTrack]);
+    if (roomConnectionStatus === 'connected') {
+      if (!isHost) return;
+      socketService.sendPlaybackCommand('TRACK_CHANGE', { track: prevTrack });
+    } else {
+      globalAudioEngine.setTrack(prevTrack);
+    }
+  }, [currentTrack, roomConnectionStatus, isHost]);
 
   const handleSeek = useCallback((newPos: number) => {
-    socketService.sendPlaybackCommand('SEEK', { positionSec: newPos });
-  }, []);
+    if (roomConnectionStatus === 'connected') {
+      if (!isHost) return;
+      socketService.sendPlaybackCommand('SEEK', { positionSec: newPos });
+    } else {
+      globalAudioEngine.seek(newPos);
+    }
+  }, [roomConnectionStatus, isHost]);
 
   const handleVolumeChange = useCallback((newVol: number) => {
     setVolume(newVol);
@@ -235,8 +286,13 @@ export default function App() {
   }, []);
 
   const handleSelectTrack = useCallback((track: AudioTrack) => {
-    socketService.sendPlaybackCommand('TRACK_CHANGE', { track });
-  }, []);
+    if (roomConnectionStatus === 'connected') {
+      if (!isHost) return;
+      socketService.sendPlaybackCommand('TRACK_CHANGE', { track });
+    } else {
+      globalAudioEngine.setTrack(track);
+    }
+  }, [roomConnectionStatus, isHost]);
 
   const handleRemoveParticipant = useCallback((id: string) => {
     setParticipants((prev) => prev.filter((p) => p.id !== id));
@@ -287,6 +343,7 @@ export default function App() {
         onVolumeChange={handleVolumeChange}
         participants={participants}
         roomCode={roomCode}
+        isHost={isHost}
         onOpenSourceSelector={() => setIsSourceSelectorOpen(true)}
         onOpenRoomManager={() => setIsRoomManagerOpen(true)}
         onPullShade={() => {}}
