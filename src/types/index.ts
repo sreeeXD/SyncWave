@@ -1,22 +1,26 @@
 export type AudioSourceType = 'spotify_sync' | 'youtube_sync' | 'radio_stream';
 
+export type MusicProviderType = 'demo' | 'youtube' | 'spotify' | 'apple_music';
+
 export interface AudioTrack {
   id: string;
   title: string;
   artist: string;
   album: string;
-  sourceApp: string; // e.g. "Spotify", "YouTube Music", "SoundCloud"
+  sourceApp: string; // e.g. "SyncWave Demo", "Spotify", "YouTube Music"
   sourceType: AudioSourceType;
+  provider: MusicProviderType;
   duration: number; // in seconds
   colorGradient: string;
   bpm: number;
   coverArtTheme: 'neon' | 'sunset' | 'forest' | 'amber' | 'cyan';
+  artworkUrl?: string;
 }
 
 export interface Participant {
   id: string;
   name: string;
-  deviceModel: string; // e.g., "Google Pixel 8 Pro", "Samsung Galaxy S24 Ultra"
+  deviceModel: string;
   isHost: boolean;
   avatarColor: string;
   latencyMs: number;

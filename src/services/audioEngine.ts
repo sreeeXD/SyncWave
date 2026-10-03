@@ -1,11 +1,15 @@
 /**
- * Audio Engine Service for SyncWave (P0.5 Synchronized Playback Layer)
- * Encapsulates demo music provider playback & simple threshold-based drift correction.
+ * Audio Engine Service for SyncWave
+ * Encapsulates room playback synchronization using the abstract IMusicProvider interface.
  */
 
-import { AudioTrack } from '../types';
+import { AudioTrack, MusicProviderType } from '../types';
 import { globalClockSync } from './clockSync';
-import { IMusicProvider, PRESET_TRACKS, SynthMusicProvider } from './MusicProvider';
+import {
+  IMusicProvider,
+  MusicProviderRegistry,
+  PRESET_TRACKS,
+} from './MusicProvider';
 
 export { PRESET_TRACKS };
 
@@ -13,6 +17,7 @@ class AudioEngineService {
   private activeProvider: IMusicProvider;
   private onStateChangeCallbacks: Set<() => void> = new Set();
   private driftCorrectionTimer: number | null = null;
+  private currentUnsubscribe: (() => void) | null = null;
 
   // Authoritative room target playback state for synchronization
   private roomTargetState: {
@@ -22,12 +27,21 @@ class AudioEngineService {
   } | null = null;
 
   constructor() {
-    this.activeProvider = new SynthMusicProvider();
-    (this.activeProvider as SynthMusicProvider).subscribe(() => {
-      this.notify();
-    });
-
+    this.activeProvider = MusicProviderRegistry.get('demo');
+    this.attachProviderListener();
     this.startDriftCorrectionLoop();
+  }
+
+  private attachProviderListener() {
+    if (this.currentUnsubscribe) {
+      this.currentUnsubscribe();
+      this.currentUnsubscribe = null;
+    }
+    if ('subscribe' in this.activeProvider && typeof (this.activeProvider as any).subscribe === 'function') {
+      this.currentUnsubscribe = (this.activeProvider as any).subscribe(() => {
+        this.notify();
+      });
+    }
   }
 
   public subscribe(cb: () => void) {
@@ -41,8 +55,30 @@ class AudioEngineService {
     this.onStateChangeCallbacks.forEach((cb) => cb());
   }
 
+  public getActiveProviderType(): MusicProviderType {
+    return this.activeProvider.providerType;
+  }
+
+  /**
+   * Switch the active music provider via MusicProviderRegistry.
+   * Throws an explicit error if the provider is not implemented.
+   * DOES NOT secretly fall back to DemoMusicProvider.
+   */
+  public switchProvider(type: MusicProviderType): IMusicProvider {
+    if (this.activeProvider.providerType === type) {
+      return this.activeProvider;
+    }
+
+    const newProvider = MusicProviderRegistry.get(type);
+    this.activeProvider.pause();
+    this.activeProvider = newProvider;
+    this.attachProviderListener();
+    this.notify();
+    return this.activeProvider;
+  }
+
   public getAnalyser(): AnalyserNode | null {
-    return this.activeProvider.getAnalyser();
+    return this.activeProvider.getAnalyser ? this.activeProvider.getAnalyser() : null;
   }
 
   public getIsPlaying(): boolean {
@@ -50,11 +86,15 @@ class AudioEngineService {
   }
 
   public getCurrentTrack(): AudioTrack {
-    return this.activeProvider.getCurrentTrack();
+    return this.activeProvider.getCurrentTrack() || PRESET_TRACKS[0];
   }
 
   public getPosition(): number {
     return this.activeProvider.getPosition();
+  }
+
+  public getDuration(): number {
+    return this.activeProvider.getDuration();
   }
 
   public async play(): Promise<void> {
@@ -69,8 +109,12 @@ class AudioEngineService {
     this.activeProvider.seek(positionSec);
   }
 
-  public setTrack(track: AudioTrack): void {
-    this.activeProvider.setTrack(track);
+  public async setTrack(track: AudioTrack): Promise<void> {
+    const trackProvider = track.provider || 'demo';
+    if (this.activeProvider.providerType !== trackProvider) {
+      this.switchProvider(trackProvider);
+    }
+    await this.activeProvider.loadTrack(track);
   }
 
   public setMasterVolume(vol0to100: number): void {
@@ -79,32 +123,40 @@ class AudioEngineService {
 
   public resetRoomTarget(): void {
     this.roomTargetState = null;
-    this.activeProvider.setPlaybackRate(1.0);
+    if (this.activeProvider.setPlaybackRate) {
+      this.activeProvider.setPlaybackRate(1.0);
+    }
   }
 
   /**
    * Apply synchronized remote playback state from WebSocket host server command or room join
    */
-  public applyRemotePlaybackState(
+  public async applyRemotePlaybackState(
     track: AudioTrack,
     isPlaying: boolean,
     positionSec: number,
     serverTimestamp: number = Date.now()
-  ): void {
+  ): Promise<void> {
     this.roomTargetState = {
       isPlaying,
       serverTimestamp,
       positionSec,
     };
 
-    if (this.activeProvider.getCurrentTrack().id !== track.id) {
-      this.activeProvider.setTrack(track);
+    const trackProvider = track.provider || 'demo';
+    if (this.activeProvider.providerType !== trackProvider) {
+      this.switchProvider(trackProvider);
+    }
+
+    const current = this.activeProvider.getCurrentTrack();
+    if (!current || current.id !== track.id) {
+      await this.activeProvider.loadTrack(track);
     }
 
     this.activeProvider.seek(positionSec);
 
     if (isPlaying && !this.activeProvider.getIsPlaying()) {
-      this.activeProvider.play();
+      await this.activeProvider.play();
     } else if (!isPlaying && this.activeProvider.getIsPlaying()) {
       this.activeProvider.pause();
     }
@@ -128,7 +180,6 @@ class AudioEngineService {
       const localPosSec = this.activeProvider.getPosition();
       const driftSec = localPosSec - expectedPosSec;
 
-      // P0.5 Simple Threshold Rule: If drift > 0.5s (500ms), perform simple seek correction
       if (Math.abs(driftSec) > 0.5) {
         console.warn(`[P0.5 Drift Correction] Seeking to authoritative position ${expectedPosSec.toFixed(2)}s (Drift: ${driftSec.toFixed(2)}s)`);
         this.activeProvider.seek(Math.max(0, expectedPosSec));

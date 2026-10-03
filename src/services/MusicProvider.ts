@@ -1,28 +1,43 @@
-import { AudioTrack } from '../types';
+import { AudioTrack, MusicProviderType } from '../types';
+
+export interface MusicProviderCapabilities {
+  play: boolean;
+  pause: boolean;
+  seek: boolean;
+  position: boolean;
+  trackChange: boolean;
+  backgroundPlayback: boolean;
+}
 
 export interface IMusicProvider {
   id: string;
   name: string;
+  providerType: MusicProviderType;
+  capabilities: MusicProviderCapabilities;
+
+  loadTrack(track: AudioTrack): Promise<void>;
   play(): Promise<void>;
   pause(): void;
   seek(positionSec: number): void;
-  setPlaybackRate(rate: number): void;
   getPosition(): number;
+  getDuration(): number;
   getIsPlaying(): boolean;
-  setTrack(track: AudioTrack): void;
-  getCurrentTrack(): AudioTrack;
-  getAnalyser(): AnalyserNode | null;
+  getCurrentTrack(): AudioTrack | null;
   setVolume(vol0to100: number): void;
+  setPlaybackRate?(rate: number): void;
+  getAnalyser?(): AnalyserNode | null;
+  destroy(): void;
 }
 
 export const PRESET_TRACKS: AudioTrack[] = [
   {
     id: 'track-1',
-    title: 'Neon Horizon (Direct Feed)',
+    title: 'Neon Horizon (Demo Feed)',
     artist: 'Aether Echoes',
     album: 'Synthetic Dreams 2026',
-    sourceApp: 'Spotify Connect',
-    sourceType: 'spotify_sync',
+    sourceApp: 'SyncWave Demo Synth',
+    sourceType: 'radio_stream',
+    provider: 'demo',
     duration: 184,
     colorGradient: 'from-fuchsia-600 via-purple-600 to-indigo-900',
     coverArtTheme: 'neon',
@@ -33,8 +48,9 @@ export const PRESET_TRACKS: AudioTrack[] = [
     title: 'Sunset Rooftop Session',
     artist: 'Kanso & The Waves',
     album: 'Warm Vinyl Nights',
-    sourceApp: 'Spotify Connect',
-    sourceType: 'spotify_sync',
+    sourceApp: 'SyncWave Demo Synth',
+    sourceType: 'radio_stream',
+    provider: 'demo',
     duration: 215,
     colorGradient: 'from-amber-500 via-rose-600 to-slate-900',
     coverArtTheme: 'sunset',
@@ -45,8 +61,9 @@ export const PRESET_TRACKS: AudioTrack[] = [
     title: 'Midnight Reverie',
     artist: 'Solas Mountain',
     album: 'Acoustic Pine Echoes',
-    sourceApp: 'YouTube Music Session',
-    sourceType: 'youtube_sync',
+    sourceApp: 'SyncWave Demo Synth',
+    sourceType: 'radio_stream',
+    provider: 'demo',
     duration: 168,
     colorGradient: 'from-emerald-600 via-teal-700 to-slate-950',
     coverArtTheme: 'forest',
@@ -57,8 +74,9 @@ export const PRESET_TRACKS: AudioTrack[] = [
     title: 'Kinetic Sub-Bass Pulse',
     artist: 'Delta Matrix',
     album: 'Sub-Ohm Protocol',
-    sourceApp: 'Cyberwave Stream',
+    sourceApp: 'SyncWave Demo Synth',
     sourceType: 'radio_stream',
+    provider: 'demo',
     duration: 240,
     colorGradient: 'from-blue-600 via-cyan-600 to-slate-900',
     coverArtTheme: 'cyan',
@@ -66,9 +84,18 @@ export const PRESET_TRACKS: AudioTrack[] = [
   },
 ];
 
-export class SynthMusicProvider implements IMusicProvider {
-  public id = 'synth-provider';
-  public name = 'Synchronized WebAudio Synth Provider';
+export class DemoMusicProvider implements IMusicProvider {
+  public id = 'demo-provider';
+  public name = 'Synchronized WebAudio Demo Provider';
+  public providerType: MusicProviderType = 'demo';
+  public capabilities: MusicProviderCapabilities = {
+    play: true,
+    pause: true,
+    seek: true,
+    position: true,
+    trackChange: true,
+    backgroundPlayback: true,
+  };
 
   private ctx: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
@@ -121,11 +148,15 @@ export class SynthMusicProvider implements IMusicProvider {
     this.onStateChangeCallbacks.forEach((cb) => cb());
   }
 
+  public async loadTrack(track: AudioTrack): Promise<void> {
+    this.setTrack(track);
+  }
+
   public getIsPlaying(): boolean {
     return this.isPlaying;
   }
 
-  public getCurrentTrack(): AudioTrack {
+  public getCurrentTrack(): AudioTrack | null {
     return this.currentTrack;
   }
 
@@ -133,8 +164,11 @@ export class SynthMusicProvider implements IMusicProvider {
     return this.playbackPositionSec;
   }
 
+  public getDuration(): number {
+    return this.currentTrack?.duration || 0;
+  }
+
   public setPlaybackRate(rate: number): void {
-    // Limit playback rate to a safe ±10% range for smooth drift compensation
     this.playbackRate = Math.max(0.9, Math.min(1.1, rate));
   }
 
@@ -186,6 +220,16 @@ export class SynthMusicProvider implements IMusicProvider {
     if (this.masterGain && this.ctx) {
       const targetGain = Math.max(0, Math.min(1, vol0to100 / 100));
       this.masterGain.gain.setValueAtTime(targetGain, this.ctx.currentTime);
+    }
+  }
+
+  public destroy(): void {
+    this.pause();
+    if (this.ctx) {
+      try {
+        this.ctx.close();
+      } catch (e) {}
+      this.ctx = null;
     }
   }
 
@@ -341,3 +385,35 @@ export class SynthMusicProvider implements IMusicProvider {
     osc.stop(t + 0.23);
   }
 }
+
+/**
+ * MusicProviderRegistry / Factory
+ * Manages registered providers and enforces that unimplemented providers
+ * throw an explicit error rather than secretly playing demo audio.
+ */
+export class MusicProviderRegistry {
+  private static providers: Map<MusicProviderType, IMusicProvider> = new Map();
+
+  public static register(provider: IMusicProvider): void {
+    this.providers.set(provider.providerType, provider);
+  }
+
+  public static get(type: MusicProviderType): IMusicProvider {
+    const provider = this.providers.get(type);
+    if (!provider) {
+      throw new Error(`Music provider "${type}" is not implemented yet.`);
+    }
+    return provider;
+  }
+
+  public static has(type: MusicProviderType): boolean {
+    return this.providers.has(type);
+  }
+
+  public static getRegisteredTypes(): MusicProviderType[] {
+    return Array.from(this.providers.keys());
+  }
+}
+
+// Automatically register default DemoMusicProvider
+MusicProviderRegistry.register(new DemoMusicProvider());
