@@ -10,6 +10,7 @@ import {
   MusicProviderRegistry,
   PRESET_TRACKS,
 } from './MusicProvider';
+import { sendNativePlaybackHeartbeat } from './nativeAndroidBridge';
 
 export { PRESET_TRACKS };
 
@@ -176,8 +177,10 @@ class AudioEngineService {
     }
   }
 
+  private lastDriftCorrectionTime: number = 0;
+
   /**
-   * Simple Threshold-Based Drift Correction (P0.5)
+   * Threshold-Based Drift Correction (P1-B.4)
    * Periodically checks if local position has drifted from authoritative server timestamp timeline.
    */
   private startDriftCorrectionLoop() {
@@ -193,9 +196,35 @@ class AudioEngineService {
       const expectedPosSec = this.roomTargetState.positionSec + elapsedSec;
       const localPosSec = this.activeProvider.getPosition();
       const driftSec = localPosSec - expectedPosSec;
+      
+      const isBuffering = this.activeProvider.isBuffering ? this.activeProvider.isBuffering() : false;
+      const providerType = this.activeProvider.providerType;
 
-      if (Math.abs(driftSec) > 0.5) {
-        console.warn(`[P0.5 Drift Correction] Seeking to authoritative position ${expectedPosSec.toFixed(2)}s (Drift: ${driftSec.toFixed(2)}s)`);
+      // Update forensic process death marker with live playback state
+      sendNativePlaybackHeartbeat(
+        providerType,
+        this.activeProvider.getIsPlaying(),
+        localPosSec,
+        this.getCurrentTrack()?.title || ''
+      );
+
+      // Diagnostic logging requested by user
+      console.log(`[AudioEngine] Drift Check | Provider: ${providerType} | Expected: ${expectedPosSec.toFixed(3)}s | Local: ${localPosSec.toFixed(3)}s | Drift: ${driftSec.toFixed(3)}s | Buffering: ${isBuffering}`);
+
+      if (isBuffering) {
+        console.log(`[AudioEngine] Skipping drift correction because provider is buffering.`);
+        return;
+      }
+
+      // Avoid correcting too frequently (5 second cooldown)
+      if (Date.now() - this.lastDriftCorrectionTime < 5000) {
+        return;
+      }
+
+      // 1.5 second threshold to account for Bluetooth latency and normal jitter
+      if (Math.abs(driftSec) > 1.5) {
+        console.warn(`[AudioEngine] Drift Correction | Seeking to authoritative position ${expectedPosSec.toFixed(2)}s (Drift: ${driftSec.toFixed(2)}s)`);
+        this.lastDriftCorrectionTime = Date.now();
         this.activeProvider.seek(Math.max(0, expectedPosSec));
       }
     }, 2000);

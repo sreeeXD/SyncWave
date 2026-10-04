@@ -389,6 +389,7 @@ export class YouTubeProvider implements IMusicProvider {
         // Don't flip isPlaying — it may still be "playing" semantically
         break;
       case YTState.CUED:
+      case -1: // UNSTARTED
         this.isPlaying = false;
         break;
     }
@@ -433,6 +434,7 @@ export class YouTubeProvider implements IMusicProvider {
     _positionLoopStartCount++;
     logDiagnostic('loop-start', `gen=${gen}`);
 
+    let lastNotifyTime = 0;
     this.positionPollingInterval = window.setInterval(() => {
       // Self-stop if generation changed (stale loop)
       if (gen !== this.loadGeneration) {
@@ -445,6 +447,7 @@ export class YouTubeProvider implements IMusicProvider {
           const curr = this.player.getCurrentTime?.();
           const dur = this.player.getDuration?.();
           let changed = false;
+          let durChanged = false;
 
           if (typeof curr === 'number' && !isNaN(curr) && curr !== this.playbackPositionSec) {
             this.playbackPositionSec = curr;
@@ -455,12 +458,16 @@ export class YouTubeProvider implements IMusicProvider {
             if (this.currentTrack && this.currentTrack.duration !== dur) {
               this.currentTrack = { ...this.currentTrack, duration: dur };
             }
-            changed = true;
+            durChanged = true;
           }
 
-          if (changed) {
-            // Propagate to AudioEngine subscribers so the UI slider updates
-            this.notify();
+          if (changed || durChanged) {
+            const now = Date.now();
+            // Throttle position-only notifications to 1Hz, but immediately notify on duration change
+            if (durChanged || now - lastNotifyTime >= 1000) {
+              lastNotifyTime = now;
+              this.notify();
+            }
           }
         } catch (e) {}
       }
@@ -554,6 +561,15 @@ export class YouTubeProvider implements IMusicProvider {
     return this.isPlaying;
   }
 
+  public isBuffering(): boolean {
+    if (!this.player || !this.isPlayerReady) return false;
+    try {
+      return this.player.getPlayerState?.() === window.YT?.PlayerState?.BUFFERING;
+    } catch (e) {
+      return false;
+    }
+  }
+
   public getCurrentTrack(): AudioTrack | null {
     return this.currentTrack;
   }
@@ -583,6 +599,8 @@ export class YouTubeProvider implements IMusicProvider {
 
     this.isPlayerReady = false;
     this.isPlaying = false;
+    this.currentTrack = null;
+    this.targetVideoId = null;
     this.containerElement = null;
     this.containerReadyResolve = null;
     this.containerReadyPromise = null;

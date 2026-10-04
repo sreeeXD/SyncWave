@@ -14,9 +14,21 @@ export interface NativeAndroidPlugin {
   openNotificationListenerSettings(): Promise<{ opened: boolean }>;
   startSystemAudioCapture(): Promise<{ requested: boolean }>;
   stopSystemAudioCapture(): Promise<{ stopped: boolean }>;
+  recordPlaybackHeartbeat(options: {
+    provider: string;
+    isPlaying: boolean;
+    position: number;
+    track: string;
+  }): Promise<void>;
 }
 
 const SyncWaveNative = registerPlugin<NativeAndroidPlugin>('SyncWaveNative');
+
+export function sendNativePlaybackHeartbeat(provider: string, isPlaying: boolean, position: number, track: string): void {
+  try {
+    SyncWaveNative.recordPlaybackHeartbeat({ provider, isPlaying, position, track }).catch(() => {});
+  } catch {}
+}
 
 export async function isNativeAndroidDevice(): Promise<boolean> {
   try {

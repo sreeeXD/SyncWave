@@ -23,6 +23,7 @@ export interface IMusicProvider {
   getPosition(): number;
   getDuration(): number;
   getIsPlaying(): boolean;
+  isBuffering?(): boolean; // Optional method to check if the provider is currently buffering
   getCurrentTrack(): AudioTrack | null;
   setVolume(vol0to100: number): void;
   setPlaybackRate?(rate: number): void;

@@ -56,7 +56,7 @@ function getRoomPublicState(room) {
 
 io.on('connection', (socket) => {
   console.log(`[Socket Connected] ID: ${socket.id}`);
-  let currentRoomCode = null;
+  socket.currentRoomCode = null;
 
   // Handle NTP Clock Synchronization
   socket.on('ntp_ping', (data = {}, callback) => {
@@ -73,9 +73,9 @@ io.on('connection', (socket) => {
   // Handle Room Creation
   socket.on('create_room', (data = {}, callback) => {
     // Enforce max ONE room per socket. If currently in a room, leave it first.
-    if (currentRoomCode && rooms.has(currentRoomCode)) {
-      console.log(`[Room Lifecycle] Socket ${socket.id} is leaving existing room ${currentRoomCode} before creating a new one.`);
-      handleUserExit(socket, currentRoomCode);
+    if (socket.currentRoomCode && rooms.has(socket.currentRoomCode)) {
+      console.log(`[Room Lifecycle] Socket ${socket.id} is leaving existing room ${socket.currentRoomCode} before creating a new one.`);
+      handleUserExit(socket, socket.currentRoomCode);
     }
 
     let code = generateRoomCode();
@@ -130,7 +130,7 @@ io.on('connection', (socket) => {
     };
 
     rooms.set(code, newRoom);
-    currentRoomCode = code;
+    socket.currentRoomCode = code;
     socket.join(code);
 
     console.log(`[Room Created] Code: ${code} | Host: ${socket.id}`);
@@ -157,12 +157,12 @@ io.on('connection', (socket) => {
     }
 
     // Enforce max ONE room per socket. If currently in a different room, leave it first.
-    if (currentRoomCode && currentRoomCode !== formattedCode && rooms.has(currentRoomCode)) {
-      console.log(`[Room Lifecycle] Socket ${socket.id} is leaving existing room ${currentRoomCode} before joining ${formattedCode}.`);
-      handleUserExit(socket, currentRoomCode);
-    } else if (currentRoomCode === formattedCode && rooms.has(formattedCode)) {
-      // Already in this room, just return current state
-      console.log(`[Room Lifecycle] Socket ${socket.id} is already in room ${formattedCode}. Returning existing state.`);
+    if (socket.currentRoomCode && socket.currentRoomCode !== formattedCode && rooms.has(socket.currentRoomCode)) {
+      console.log(`[Room Lifecycle] Socket ${socket.id} is leaving existing room ${socket.currentRoomCode} before joining ${formattedCode}.`);
+      handleUserExit(socket, socket.currentRoomCode);
+    } else if (rooms.has(formattedCode) && rooms.get(formattedCode).participants.has(socket.id)) {
+      // Already an active participant in this room, just return current state
+      console.log(`[Room Lifecycle] Socket ${socket.id} is already an active participant in room ${formattedCode}. Returning existing state.`);
       const room = rooms.get(formattedCode);
       const roomState = getRoomPublicState(room);
       if (typeof callback === 'function') {
@@ -201,7 +201,7 @@ io.on('connection', (socket) => {
     }
 
     room.participants.set(socket.id, newParticipant);
-    currentRoomCode = formattedCode;
+    socket.currentRoomCode = formattedCode;
     socket.join(formattedCode);
 
     console.log(`[Participant Joined] Room: ${formattedCode} | User: ${socket.id}`);
@@ -221,7 +221,7 @@ io.on('connection', (socket) => {
   // Handle Synchronized Playback Commands (P0.5)
   // Host -> Backend -> All Clients
   socket.on('playback_command', (data = {}, callback) => {
-    const code = data.roomCode || currentRoomCode;
+    const code = data.roomCode || socket.currentRoomCode;
     if (!code || !rooms.has(code)) {
       if (typeof callback === 'function') callback({ success: false, error: 'Room not found' });
       return;
@@ -280,18 +280,50 @@ io.on('connection', (socket) => {
 
   // Handle Leaving Room
   socket.on('leave_room', (data = {}, callback) => {
-    const code = data.roomCode || currentRoomCode;
+    const code = data.roomCode || socket.currentRoomCode;
     if (code && rooms.has(code)) {
       handleUserExit(socket, code);
     }
+    socket.currentRoomCode = null;
     if (typeof callback === 'function') callback({ success: true });
+  });
+
+  // Handle Kicking Participant (P1-B.4 Goal 9)
+  socket.on('kick_participant', (data = {}, callback) => {
+    const code = data.roomCode || socket.currentRoomCode;
+    const targetId = data.targetId;
+    if (!code || !rooms.has(code) || !targetId) {
+      if (typeof callback === 'function') callback({ success: false, error: 'Invalid room or target ID.' });
+      return;
+    }
+    const room = rooms.get(code);
+    if (socket.id !== room.hostId) {
+      if (typeof callback === 'function') callback({ success: false, error: 'Only the Host can kick participants.' });
+      return;
+    }
+    if (room.participants.has(targetId)) {
+      console.log(`[Participant Kicked] Room: ${code} | Host: ${socket.id} kicked User: ${targetId}`);
+      // Find the target socket and forcefully make them leave
+      const targetSocket = io.sockets.sockets.get(targetId);
+      if (targetSocket) {
+        targetSocket.emit('kicked_from_room', { roomCode: code });
+        handleUserExit(targetSocket, code);
+      } else {
+        // Socket disconnected but still in memory? Cleanup manually.
+        room.participants.delete(targetId);
+        io.to(code).emit('room_updated', getRoomPublicState(room));
+      }
+      if (typeof callback === 'function') callback({ success: true });
+    } else {
+      if (typeof callback === 'function') callback({ success: false, error: 'Participant not found in room.' });
+    }
   });
 
   // Handle Disconnect
   socket.on('disconnect', () => {
     console.log(`[Socket Disconnected] ID: ${socket.id}`);
-    if (currentRoomCode && rooms.has(currentRoomCode)) {
-      handleUserExit(socket, currentRoomCode);
+    if (socket.currentRoomCode && rooms.has(socket.currentRoomCode)) {
+      handleUserExit(socket, socket.currentRoomCode);
     } else {
       rooms.forEach((room, code) => {
         if (room.participants.has(socket.id)) {
@@ -308,6 +340,7 @@ function handleUserExit(socket, code) {
 
   room.participants.delete(socket.id);
   socket.leave(code);
+  socket.currentRoomCode = null;
 
   console.log(`[User Left] Room: ${code} | User: ${socket.id}`);
 

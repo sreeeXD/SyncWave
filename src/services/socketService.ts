@@ -27,6 +27,7 @@ class SocketService {
   private errorCallbacks: Set<(error: string) => void> = new Set();
   private playbackCommandCallbacks: Set<(cmd: PlaybackCommandPayload) => void> = new Set();
   private connectionStatusCallbacks: Set<(connected: boolean) => void> = new Set();
+  private kickedCallbacks: Set<() => void> = new Set();
 
   constructor() {
     if (typeof localStorage !== 'undefined') {
@@ -167,6 +168,12 @@ class SocketService {
       this.errorCallbacks.forEach((cb) => cb(data.error));
     });
 
+    this.socket.on('kicked_from_room', (data) => {
+      console.warn(`[SocketService] Kicked from room ${this.currentRoomCode}`);
+      this.currentRoomCode = null;
+      this.kickedCallbacks.forEach((cb) => cb());
+    });
+
     return this.socket;
   }
 
@@ -233,6 +240,12 @@ class SocketService {
     }
   }
 
+  public kickParticipant(targetId: string): void {
+    if (this.socket && this.currentRoomCode) {
+      this.socket.emit('kick_participant', { roomCode: this.currentRoomCode, targetId });
+    }
+  }
+
   public onRoomUpdated(cb: (roomState: RoomState) => void): () => void {
     this.roomUpdatedCallbacks.add(cb);
     return () => {
@@ -251,6 +264,13 @@ class SocketService {
     this.playbackCommandCallbacks.add(cb);
     return () => {
       this.playbackCommandCallbacks.delete(cb);
+    };
+  }
+
+  public onKicked(cb: () => void): () => void {
+    this.kickedCallbacks.add(cb);
+    return () => {
+      this.kickedCallbacks.delete(cb);
     };
   }
 

@@ -11,6 +11,7 @@ import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.syncwave.audiosync.MainActivity
+import com.syncwave.audiosync.ProcessDeathMarker
 import com.syncwave.audiosync.service.AudioRelayHub
 import com.syncwave.audiosync.service.CurrentTrackHolder
 
@@ -76,5 +77,15 @@ class SyncWaveAudioPlugin : Plugin() {
         } else {
             call.reject("MainActivity not available")
         }
+    }
+
+    @PluginMethod
+    fun recordPlaybackHeartbeat(call: PluginCall) {
+        val provider = call.getString("provider") ?: "none"
+        val isPlaying = call.getBoolean("isPlaying") ?: false
+        val position = call.getDouble("position") ?: 0.0
+        val track = call.getString("track") ?: ""
+        ProcessDeathMarker.recordPlayback("provider=$provider, isPlaying=$isPlaying, pos=${position.toInt()}s, track=$track")
+        call.resolve()
     }
 }

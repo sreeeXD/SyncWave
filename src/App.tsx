@@ -146,12 +146,25 @@ export default function App() {
       );
     });
 
+    const unsubscribeKicked = socketService.onKicked(() => {
+      console.warn('[App] Kicked from room by host');
+      setRoomConnectionStatus('no_room');
+      setRoomCode('');
+      setParticipants([]);
+      globalAudioEngine.resetRoomTarget();
+      globalAudioEngine.pause();
+      setTimeout(() => {
+        alert('You have been removed from the room by the host.');
+      }, 100);
+    });
+
     return () => {
       isMounted = false;
       if (unsubscribeConn) unsubscribeConn();
       unsubscribeRoom();
       unsubscribeHost();
       unsubscribePlayback();
+      unsubscribeKicked();
     };
   }, []);
 
@@ -292,8 +305,10 @@ export default function App() {
   }, [roomConnectionStatus, isHost]);
 
   const handleRemoveParticipant = useCallback((id: string) => {
-    setParticipants((prev) => prev.filter((p) => p.id !== id));
-  }, []);
+    if (roomConnectionStatus === 'connected' && isHost) {
+      socketService.kickParticipant(id);
+    }
+  }, [roomConnectionStatus, isHost]);
 
   const handleUpdateParticipantVolume = useCallback((id: string, vol: number) => {
     setParticipants((prev) =>
